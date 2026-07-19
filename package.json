@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@opentiny/genui-sdk-vue": "^1.2.1",
     "@tanstack/vue-virtual": "^3.13.32",
     "echarts": "^6.1.0",
     "element-plus": "^2.14.3",

@@ -72,7 +72,6 @@ provide(GENUI_ON_ACTION, (action: string, data: Record<string, unknown>) => {
 }
 
 .genui-container {
-  // padding: 0;
   border: none;
   .el-card{
     min-height:0 !important;

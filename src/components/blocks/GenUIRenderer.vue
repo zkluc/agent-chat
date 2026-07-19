@@ -26,7 +26,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, type Component } from 'vue'
+import { computed, inject, type Component, h } from 'vue'
 import type { GenUISchema } from '@/events/types'
 import {
   ElForm,
@@ -82,9 +82,32 @@ const props = defineProps<{
   schema: GenUISchema
 }>()
 
+const FLEX_BOX_PROPS = new Set([
+  'flexDirection', 'justifyContent', 'alignItems', 'flexWrap',
+  'flexGrow', 'flexShrink', 'flexBasis', 'gap', 'rowGap', 'columnGap',
+])
+
+const CanvasFlexBox = {
+  name: 'CanvasFlexBox',
+  inheritAttrs: false,
+  setup(_props: any, { attrs, slots }: any) {
+    return () => {
+      const style: Record<string, string> = {}
+      for (const [key, val] of Object.entries(attrs)) {
+        if (FLEX_BOX_PROPS.has(key) && typeof val === 'string') {
+          style[key] = val
+        }
+      }
+      if (!style.display) style.display = 'flex'
+      return h('div', { ...attrs, style, class: attrs.className }, slots.default?.())
+    }
+  },
+}
+
 const COMPONENT_MAP: Record<string, Component> = {
   Page: ElCard,
   Text: 'div',
+  CanvasFlexBox: CanvasFlexBox as unknown as Component,
   TinyForm: ElForm,
   TinyFormItem: ElFormItem,
   TinyInput: ElInput,
@@ -107,6 +130,7 @@ const COMPONENT_MAP: Record<string, Component> = {
   TinyCollapseItem: ElCollapseItem,
   TinyTabs: ElTabs,
   TinyTabPane: ElTabPane,
+  TinyTabItem: ElTabPane,
   TinyAlert: ElAlert,
   TinyDivider: ElDivider,
   TinyImage: ElImage,
@@ -231,10 +255,23 @@ const validChildren = computed(() => {
   return c.filter(item => item !== null && item !== undefined)
 })
 
-const hasChildren = computed(() => validChildren.value.length > 0)
+const buttonText = computed(() => {
+  const compName = props.schema.componentName
+  const raw = props.schema.props || {}
+  if ((compName === 'ElButton' || compName === 'TinyButton') && typeof raw.text === 'string') {
+    return raw.text
+  }
+  return null
+})
+
+const hasChildren = computed(() => validChildren.value.length > 0 || buttonText.value !== null)
 
 const textChildren = computed(() => {
-  return validChildren.value.filter((c): c is string => typeof c === 'string')
+  const texts = validChildren.value.filter((c): c is string => typeof c === 'string')
+  if (texts.length === 0 && buttonText.value) {
+    return [buttonText.value]
+  }
+  return texts
 })
 
 function convertStyle(raw: unknown): Record<string, string> {
@@ -303,6 +340,22 @@ const resolvedProps = computed(() => {
 
   if ((compName === 'ElButton' || compName === 'TinyButton') && typeof p.type === 'string' && !TYPE_MAP[p.type]) {
     p.type = 'default'
+  }
+
+  if ((compName === 'ElButton' || compName === 'TinyButton') && typeof p.text === 'string') {
+    delete p.text
+  }
+
+  // LLM outputs JSExpression objects for boolean props — coerce to boolean or strip
+  const BOOLEAN_PROPS = ['loading', 'disabled', 'plain', 'round', 'circle', 'autofocus', 'open', 'draggable', 'showClose']
+  for (const key of BOOLEAN_PROPS) {
+    if (p[key] !== undefined && typeof p[key] !== 'boolean') {
+      if (typeof p[key] === 'object') {
+        delete p[key]  // JSExpression objects — can't resolve, strip
+      } else {
+        p[key] = !!p[key]  // coerce truthy/falsy string to boolean
+      }
+    }
   }
 
   if (p.style) {

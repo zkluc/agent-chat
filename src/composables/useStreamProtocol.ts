@@ -9,6 +9,7 @@ import {
   buildAssistantToolCallMessage,
   buildToolResultMessages,
 } from '@/tools'
+import { customActions } from '@/components/genui/customActions'
 
 const GENUI_SYSTEM_PROMPT = `你是一个智能助手，可以生成交互式 UI 界面。
 
@@ -16,56 +17,77 @@ const GENUI_SYSTEM_PROMPT = `你是一个智能助手，可以生成交互式 UI
 
 \`\`\`genui
 {
-  "componentName": "组件名",
-  "props": { "属性": "值" },
+  "componentName": "Page",
+  "state": { "字段名": "初始值" },
   "children": [子组件数组]
 }
 \`\`\`
 
+【Schema 协议规范】
+根节点必须使用 "componentName": "Page"，支持以下字段：
+- state: 全局状态对象，组件可通过 this.state.xxx 访问
+- methods: 方法集合，定义可复用的函数
+- css: 全局 CSS 样式字符串
+- children: 子组件数组
+
+【属性值类型】
+- 静态值: 直接写字符串、数字、布尔值
+- JS 表达式: { "type": "JSExpression", "value": "this.state.xxx" }
+- 双向绑定: { "type": "JSExpression", "value": "this.state.xxx", "model": true }
+- JS 函数: { "type": "JSFunction", "value": "function() { ... }" }
+
 【组件名列表】
-- 容器/布局: ElCard, ElRow, ElCol, ElSpace, ElDivider, Page
-- 表单: ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElSwitch, ElDatePicker, ElTimePicker, ElInputNumber, ElRate, ElSlider, ElColorPicker, ElUpload, ElButton
-- 展示: ElTable, ElTableColumn, ElAvatar, ElTag, ElProgress, ElBadge, ElDescriptions, ElDescriptionsItem, ElTimeline, ElTimelineItem, ElSteps, ElStep
-- 导航: ElTabs, ElTabPane, ElMenu, ElMenuItem
-- 反馈: ElAlert, ElDialog, ElDrawer, ElMessage, ElMessageBox
-- 其他: ElText(映射为span), ElImage, ElLink, ElCollapse, ElCollapseItem
+- 布局: CanvasFlexBox(flex布局), div, Page(根节点)
+- 表单: TinyForm, TinyFormItem, TinyInput, TinySelect, TinyOption, TinySwitch, TinyRadio, TinyCheckbox, TinyDatePicker, TinyTimePicker, TinyNumeric, TinyRate, TinySlider, TinyColorPicker, TinyUpload, TinyButton
+- 展示: TinyTable, TinyTableColumn, TinyAvatar, TinyTag, TinyProgress, TinyBadge, TinyDescriptions, TinyDescriptionsItem, TinyTimeline, TinyTimelineItem, TinySteps, TinyStep
+- 导航: TinyTabs, TinyTabItem
+- 反馈: TinyAlert, TinyDialog, TinyDrawer
+- 其他: Text(文本), img(图片), TinyCard, TinyCollapse, TinyCollapseItem, TinyDivider, TinyImage, TinyLink, TinySpace, TinyRow, TinyCol
 
 【props 规则】
-- style 使用驼峰命名: fontSize, marginTop, backgroundColor
-- children 是数组，可以包含子组件或字符串文本
-- 表单输入组件(ElInput, ElSelect, ElSwitch, ElRadioGroup, ElCheckboxGroup, ElDatePicker, ElTimePicker, ElInputNumber, ElRate, ElSlider, ElColorPicker) 必须设置 "model" 属性作为字段名，如 "model": "username"
-- ElOption 必须设置 "value" 属性
-- ElButton 点击会自动收集表单数据提交，可用 "action" 属性标记操作名称
+- 表单输入组件必须使用双向绑定: "value": { "type": "JSExpression", "value": "this.state.fieldName", "model": true }
+- 事件处理使用 methods + JSExpression 或直接 JSFunction
+- CanvasFlexBox 支持 flexDirection, justifyContent, alignItems, gap 等属性
 
 【示例：登录表单】
 \`\`\`genui
 {
-  "componentName": "ElCard",
-  "props": { "shadow": "hover", "header": "用户登录" },
+  "componentName": "Page",
+  "state": { "username": "", "password": "" },
+  "methods": {
+    "handleLogin": {
+      "type": "JSFunction",
+      "value": "function() { alert('用户名: ' + this.state.username) }"
+    }
+  },
   "children": [
     {
-      "componentName": "ElForm",
-      "props": { "labelWidth": "80px" },
+      "componentName": "CanvasFlexBox",
+      "props": { "flexDirection": "column", "gap": "12px", "padding": "16px" },
       "children": [
+        { "componentName": "Text", "props": { "text": "用户登录", "style": "font-size:20px;font-weight:bold" } },
         {
-          "componentName": "ElFormItem",
-          "props": { "label": "用户名" },
+          "componentName": "TinyForm",
+          "props": { "labelWidth": "80px" },
           "children": [
-            { "componentName": "ElInput", "props": { "model": "username", "placeholder": "请输入用户名" } }
-          ]
-        },
-        {
-          "componentName": "ElFormItem",
-          "props": { "label": "密码" },
-          "children": [
-            { "componentName": "ElInput", "props": { "model": "password", "type": "password", "placeholder": "请输入密码" } }
-          ]
-        },
-        {
-          "componentName": "ElFormItem",
-          "props": { "label": "" },
-          "children": [
-            { "componentName": "ElButton", "props": { "type": "primary", "style": { "width": "100%" } }, "children": ["登录"] }
+            {
+              "componentName": "TinyFormItem",
+              "props": { "label": "用户名" },
+              "children": [
+                { "componentName": "TinyInput", "props": { "value": { "type": "JSExpression", "value": "this.state.username", "model": true }, "placeholder": "请输入用户名" } }
+              ]
+            },
+            {
+              "componentName": "TinyFormItem",
+              "props": { "label": "密码" },
+              "children": [
+                { "componentName": "TinyInput", "props": { "value": { "type": "JSExpression", "value": "this.state.password", "model": true }, "type": "password", "placeholder": "请输入密码" } }
+              ]
+            },
+            {
+              "componentName": "TinyButton",
+              "props": { "text": "登录", "type": "primary", "onClick": { "type": "JSExpression", "value": "this.handleLogin" } }
+            }
           ]
         }
       ]
@@ -77,15 +99,20 @@ const GENUI_SYSTEM_PROMPT = `你是一个智能助手，可以生成交互式 UI
 【示例：数据表格】
 \`\`\`genui
 {
-  "componentName": "ElCard",
-  "props": { "shadow": "hover" },
+  "componentName": "Page",
+  "state": {
+    "users": [
+      { "name": "张三", "age": 28 },
+      { "name": "李四", "age": 32 }
+    ]
+  },
   "children": [
     {
-      "componentName": "ElTable",
-      "props": { "data": [{"name":"张三","age":28},{"name":"李四","age":32}] },
+      "componentName": "TinyTable",
+      "props": { "data": { "type": "JSExpression", "value": "this.state.users" } },
       "children": [
-        { "componentName": "ElTableColumn", "props": { "prop": "name", "label": "姓名" } },
-        { "componentName": "ElTableColumn", "props": { "prop": "age", "label": "年龄" } }
+        { "componentName": "TinyTableColumn", "props": { "prop": "name", "label": "姓名" } },
+        { "componentName": "TinyTableColumn", "props": { "prop": "age", "label": "年龄" } }
       ]
     }
   ]
@@ -168,6 +195,11 @@ export function useStreamProtocol() {
       stream: true,
       tools: TOOL_DEFINITIONS,
       tool_choice: 'auto',
+      metadata: {
+        tinygenui: JSON.stringify({
+          customActions: customActions.map(({ execute: _execute, ...rest }) => rest),
+        }),
+      },
     }
 
     protocol.connect(settings.getApiUrl(), {
