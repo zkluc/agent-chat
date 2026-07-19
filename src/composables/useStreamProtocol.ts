@@ -1,8 +1,14 @@
-import { ref, onUnmounted, type Ref } from 'vue'
+import { ref, onUnmounted } from 'vue'
 import { createStreamProtocol, type StreamProtocol, type StreamStatus } from '@/protocols'
 import type { AgentScopeEvent } from '@/events/types'
 import { useConversationStore } from '@/stores/conversation'
 import { useSettingsStore } from '@/stores/settings'
+import {
+  TOOL_DEFINITIONS,
+  executeTool,
+  buildAssistantToolCallMessage,
+  buildToolResultMessages,
+} from '@/tools'
 
 const GENUI_SYSTEM_PROMPT = `你是一个智能助手，可以生成交互式 UI 界面。
 
@@ -94,6 +100,8 @@ export function useStreamProtocol() {
 
   let protocol: StreamProtocol | null = null
   const status = ref<StreamStatus>('idle')
+  let conversationHistory: { role: string; content?: string; tool_calls?: unknown[]; tool_call_id?: string }[] = []
+  let agenticLoopActive = false
 
   const cleanups: (() => void)[] = []
 
@@ -110,43 +118,126 @@ export function useStreamProtocol() {
   }
 
   function sendMessage(text: string) {
-    // Build OpenAI-compatible messages array from conversation history
-    const history = store.messages.map(m => ({
-      role: m.role,
-      content: m.content
-        .filter(b => b.type === 'text')
-        .map(b => (b as { type: 'text'; text: string }).text)
-        .join('\n'),
-    })).filter(m => m.content)
+    // Build conversation history for OpenAI format
+    conversationHistory = []
 
-    // Add system prompt for GenUI support
-    const hasSystem = history.some(m => m.role === 'system')
-    if (!hasSystem) {
-      history.unshift({ role: 'system', content: GENUI_SYSTEM_PROMPT })
+    // Add system prompt for GenUI + tool support
+    const systemContent = GENUI_SYSTEM_PROMPT + `\n\n你可以使用以下工具：\n${TOOL_DEFINITIONS.map(t => `- ${t.function.name}: ${t.function.description}`).join('\n')}`
+    conversationHistory.push({ role: 'system', content: systemContent })
+
+    // Add previous messages (text only for now)
+    for (const msg of store.messages) {
+      if (msg.role === 'user') {
+        const textContent = msg.content
+          .filter(b => b.type === 'text')
+          .map(b => (b as { type: 'text'; text: string }).text)
+          .join('\n')
+        if (textContent) {
+          conversationHistory.push({ role: 'user', content: textContent })
+        }
+      }
+      // Assistant messages will be handled by the agentic loop
     }
 
-    history.push({ role: 'user', content: text })
+    // Add current user message
+    conversationHistory.push({ role: 'user', content: text })
 
-    const body = {
-      model: settings.model,
-      messages: history,
-      stream: true,
-    }
-
-    const msg = store.addUserMessage(text)
+    store.addUserMessage(text)
     store.startAssistantMessage()
     store.resetStream()
 
-    // Create fresh connection each time for SSE
+    startStream()
+  }
+
+  function startStream() {
     disconnect()
+
     protocol = createStreamProtocol(settings.protocol)
     attachProtocolHandlers(protocol)
+
+    protocol.onMessage((event) => {
+      // After stream ends, check if we need to run agentic loop
+      if (event.type === 'reply_end') {
+        checkAndRunAgenticLoop()
+      }
+    })
+
+    const body = {
+      model: settings.model,
+      messages: conversationHistory,
+      stream: true,
+      tools: TOOL_DEFINITIONS,
+      tool_choice: 'auto',
+    }
 
     protocol.connect(settings.getApiUrl(), {
       headers: settings.getHeaders(),
       body,
       reconnect: false,
     })
+  }
+
+  function checkAndRunAgenticLoop() {
+    // Wait a tick for the processor to finish updating
+    setTimeout(async () => {
+      const completedTools = store.streamProcessor.getCompletedToolCalls()
+
+      if (completedTools.length === 0) {
+        agenticLoopActive = false
+        return
+      }
+
+      agenticLoopActive = true
+
+      // 1. Build assistant message with tool_calls
+      const assistantToolCalls = completedTools.map(tc => ({
+        id: tc.id,
+        name: tc.name,
+        arguments: tc.input,
+      }))
+
+      conversationHistory.push(buildAssistantToolCallMessage(assistantToolCalls))
+
+      // 2. Mark all as running, then execute all tools concurrently
+      const results: { tool_call_id: string; content: string }[] = []
+
+      for (const tc of completedTools) {
+        store.updateToolCallState(tc.id, 'running')
+        store.streamProcessor.markToolCallExecuted(tc.id)
+      }
+
+      const execResults = await Promise.allSettled(
+        completedTools.map(async (tc) => {
+          const result = await executeTool(tc.name, tc.input)
+          return { id: tc.id, name: tc.name, result }
+        })
+      )
+
+      for (let i = 0; i < completedTools.length; i++) {
+        const tc = completedTools[i]
+        const execResult = execResults[i]
+        if (execResult.status === 'fulfilled') {
+          store.updateToolCallState(tc.id, 'finished', execResult.value.result)
+          store.addToolResultBlock(tc.id, tc.name, execResult.value.result, 'success')
+          results.push({ tool_call_id: tc.id, content: execResult.value.result })
+        } else {
+          const errorMsg = JSON.stringify({ error: execResult.reason?.message || 'Unknown error' })
+          store.updateToolCallState(tc.id, 'finished', errorMsg)
+          store.addToolResultBlock(tc.id, tc.name, errorMsg, 'error')
+          results.push({ tool_call_id: tc.id, content: errorMsg })
+        }
+      }
+
+      // 3. Add tool results to conversation history
+      conversationHistory.push(...buildToolResultMessages(results))
+
+      // 4. Continue streaming — model will generate final response based on tool results
+      store.startAssistantMessage()
+      store.streamProcessor.reset()
+      store.streamProcessor.setFinishedWithToolCalls(false)
+
+      startStream()
+    }, 100)
   }
 
   function disconnect() {

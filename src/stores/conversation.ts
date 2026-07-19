@@ -51,6 +51,7 @@ export const useConversationStore = defineStore('conversation', () => {
   const isStreaming = computed(() => streamProcessor.isStreaming.value)
   const currentBlocks = computed(() => streamProcessor.getOrderedBlockStates())
   const streamError = computed(() => streamProcessor.error.value)
+  const finishedWithToolCalls = computed(() => streamProcessor.finishedWithToolCalls.value)
 
   function createConversation(title?: string): string {
     const id = `conv_${Date.now()}`
@@ -113,7 +114,10 @@ export const useConversationStore = defineStore('conversation', () => {
 
   function handleStreamEvent(event: import('@/events/types').AgentScopeEvent) {
     streamProcessor.handleEvent(event)
+    syncBlocksToMessage()
+  }
 
+  function syncBlocksToMessage() {
     const assistantMsg = getAssistantMessage()
     if (!assistantMsg) return
 
@@ -145,14 +149,14 @@ export const useConversationStore = defineStore('conversation', () => {
             id: b.id,
             name: (b.meta?.name as string) || '',
             input: (b.meta?.input as string) || '',
-            state: b.complete ? 'finished' as const : 'submitted' as const,
+            state: (b.meta?.toolState as any) || (b.complete ? 'finished' as const : 'submitted' as const),
           }
         case 'tool_result':
           return {
             type: 'tool_result' as const,
             id: b.id,
             name: (b.meta?.name as string) || '',
-            output: b.content || '',
+            output: (b.meta?.output as string) || b.content || '',
             state: (b.meta?.resultState as any) || (b.complete ? 'success' as const : 'running' as const),
           }
         case 'hint':
@@ -171,6 +175,16 @@ export const useConversationStore = defineStore('conversation', () => {
       activeConversation.value.updated_at = new Date().toISOString()
       persist()
     }
+  }
+
+  function updateToolCallState(blockId: string, state: string, result?: string) {
+    streamProcessor.updateToolCallState(blockId, state, result)
+    syncBlocksToMessage()
+  }
+
+  function addToolResultBlock(toolCallId: string, name: string, output: string, state: string) {
+    streamProcessor.addToolResultBlock(toolCallId, name, output, state)
+    syncBlocksToMessage()
   }
 
   function resetStream() {
@@ -216,6 +230,7 @@ export const useConversationStore = defineStore('conversation', () => {
     isStreaming,
     currentBlocks,
     streamError,
+    finishedWithToolCalls,
     streamProcessor,
     createConversation,
     setActiveConversation,
@@ -228,5 +243,7 @@ export const useConversationStore = defineStore('conversation', () => {
     updateConversationTitle,
     clearMessages,
     clearAll,
+    updateToolCallState,
+    addToolResultBlock,
   }
 })

@@ -4,15 +4,24 @@
       <span class="result-icon">{{ stateIcon }}</span>
       <span class="tool-name">{{ block.meta?.name || '工具结果' }}</span>
       <el-tag size="small" :type="tagType">{{ stateLabel }}</el-tag>
+      <el-button
+        v-if="block.content"
+        size="small"
+        text
+        class="copy-btn"
+        @click="copyResult"
+      >
+        {{ copied ? '已复制' : '复制' }}
+      </el-button>
     </div>
     <div class="tool-result-output">
-      <pre class="output-text">{{ block.content }}</pre>
+      <pre class="output-text">{{ formattedOutput }}</pre>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps<{
   block: {
@@ -25,7 +34,19 @@ const props = defineProps<{
   }
 }>()
 
+const copied = ref(false)
+
 const resultState = computed(() => (props.block.meta?.resultState as string) || 'running')
+
+const formattedOutput = computed(() => {
+  const output = (props.block.meta?.output as string) || props.block.content
+  if (!output) return ''
+  try {
+    return JSON.stringify(JSON.parse(output), null, 2)
+  } catch {
+    return output
+  }
+})
 
 const stateIcon = computed(() => {
   switch (resultState.value) {
@@ -48,6 +69,7 @@ const stateLabel = computed(() => {
 })
 
 const stateClass = computed(() => `state-${resultState.value}`)
+
 const tagType = computed(() => {
   switch (resultState.value) {
     case 'success': return 'success'
@@ -55,6 +77,24 @@ const tagType = computed(() => {
     default: return 'info'
   }
 })
+
+async function copyResult() {
+  try {
+    await navigator.clipboard.writeText(formattedOutput.value)
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 2000)
+  } catch {
+    // Fallback for older browsers
+    const textarea = document.createElement('textarea')
+    textarea.value = formattedOutput.value
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 2000)
+  }
+}
 </script>
 
 <style scoped>
@@ -83,6 +123,10 @@ const tagType = computed(() => {
 .tool-name {
   font-weight: 600;
   font-size: 13px;
+}
+.copy-btn {
+  margin-left: auto;
+  font-size: 12px;
 }
 .tool-result-output {
   background: var(--code-bg, #1e1e2e);

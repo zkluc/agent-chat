@@ -317,6 +317,14 @@ const resolvedProps = computed(() => {
     }
   }
 
+  if (p.underline !== undefined) {
+    if (typeof p.underline === 'boolean') {
+      p.underline = p.underline ? 'always' : 'never'
+    } else if (typeof p.underline === 'string' && !['always', 'hover', 'never'].includes(p.underline)) {
+      delete p.underline
+    }
+  }
+
   if (p.gutter !== undefined) {
     const num = Number(p.gutter)
     if (!isNaN(num)) {
@@ -332,6 +340,14 @@ const resolvedProps = computed(() => {
 
   if (FORM_COMPONENTS.has(compName) && raw.model === undefined) {
     delete p.value
+  }
+
+  if (p.labelPosition !== undefined) {
+    if (typeof p.labelPosition === 'string' && ['left', 'right', 'top'].includes(p.labelPosition)) {
+      // valid
+    } else {
+      delete p.labelPosition
+    }
   }
 
   if (p.model !== undefined) {

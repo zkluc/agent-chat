@@ -11,12 +11,19 @@ interface StreamBlockState {
   meta?: Record<string, unknown>
 }
 
+export interface CompletedToolCall {
+  id: string
+  name: string
+  input: string
+}
+
 export class StreamProcessor {
   private blocks = reactive<Map<string, StreamBlockState>>(new Map())
   private blockOrder = ref<string[]>([])
   private currentReplyId = ref<string | null>(null)
   private _isStreaming = ref(false)
   private _error = ref<string | null>(null)
+  private _finishedWithToolCalls = ref(false)
 
   get isStreaming() {
     return this._isStreaming
@@ -30,6 +37,9 @@ export class StreamProcessor {
   get orderedBlocks() {
     return this.blockOrder
   }
+  get finishedWithToolCalls() {
+    return this._finishedWithToolCalls
+  }
 
   reset() {
     this.blocks.clear()
@@ -37,6 +47,7 @@ export class StreamProcessor {
     this.currentReplyId.value = null
     this._isStreaming.value = false
     this._error.value = null
+    this._finishedWithToolCalls.value = false
   }
 
   handleEvent(event: AgentScopeEvent) {
@@ -152,7 +163,11 @@ export class StreamProcessor {
         break
 
       case 'custom':
-        this.addBlock(`custom_${Date.now()}`, 'custom', { name: event.name, value: event.value })
+        if (event.name === 'tool_calls_finish') {
+          this._finishedWithToolCalls.value = true
+        } else {
+          this.addBlock(`custom_${Date.now()}`, 'custom', { name: event.name, value: event.value })
+        }
         break
 
       default:
@@ -234,5 +249,54 @@ export class StreamProcessor {
     return this.blockOrder.value
       .map(id => this.blocks.get(id))
       .filter((b): b is StreamBlockState => b !== undefined)
+  }
+
+  getCompletedToolCalls(): CompletedToolCall[] {
+    const results: CompletedToolCall[] = []
+    for (const block of this.blocks.values()) {
+      if (block.type === 'tool_call' && block.complete) {
+        const executed = block.meta?.executed as boolean
+        if (!executed) {
+          results.push({
+            id: block.id,
+            name: (block.meta?.name as string) || '',
+            input: (block.meta?.input as string) || '',
+          })
+        }
+      }
+    }
+    return results
+  }
+
+  markToolCallExecuted(blockId: string) {
+    const block = this.blocks.get(blockId)
+    if (block) {
+      block.meta = { ...block.meta, executed: true }
+    }
+  }
+
+  updateToolCallState(blockId: string, state: string, result?: string) {
+    const block = this.blocks.get(blockId)
+    if (block) {
+      block.meta = { ...block.meta, toolState: state, toolResult: result }
+    }
+  }
+
+  addToolResultBlock(toolCallId: string, name: string, output: string, state: string) {
+    const id = `tr_${toolCallId}`
+    if (this.blocks.has(id)) return
+    this.blocks.set(id, {
+      id,
+      type: 'tool_result',
+      content: output,
+      streaming: false,
+      complete: true,
+      meta: { name, output, resultState: state },
+    })
+    this.blockOrder.value.push(id)
+  }
+
+  setFinishedWithToolCalls(value: boolean) {
+    this._finishedWithToolCalls.value = value
   }
 }
