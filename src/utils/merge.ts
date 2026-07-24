@@ -1,5 +1,5 @@
 // src/utils/merge.ts
-import { diff3_merge, type MergeRegion } from 'node-diff3'
+import { diff3MergeRegions } from 'node-diff3'
 
 export interface MergeChange {
   id: number
@@ -40,6 +40,23 @@ function makeConflictId(): number {
   return ++changeIdCounter
 }
 
+interface Diff3Region {
+  stable: boolean
+  buffer?: 'a' | 'b' | 'o'
+  bufferStart?: number
+  bufferLength?: number
+  bufferContent?: string[]
+  aStart?: number
+  aLength?: number
+  aContent?: string[]
+  oStart?: number
+  oLength?: number
+  oContent?: string[]
+  bStart?: number
+  bLength?: number
+  bContent?: string[]
+}
+
 export function computeThreeWayMerge(
   baseText: string,
   leftText: string,
@@ -49,40 +66,74 @@ export function computeThreeWayMerge(
   const leftLines = leftText.split('\n')
   const rightLines = rightText.split('\n')
 
-  const regions: MergeRegion[] = diff3_merge(leftLines, rightLines, baseLines)
+  const regions: Diff3Region[] = diff3MergeRegions(leftLines, rightLines, baseLines)
 
   const changes: MergeChange[] = []
   const conflicts: MergeConflict[] = []
   const mergedLines: string[] = []
 
-  let baseOffset = 0
+  // Pre-scan: collect "o" and conflict regions which give exact base positions
+  const knownBasePositions: Array<{
+    index: number
+    baseStart: number
+    baseEnd: number
+  }> = []
 
-  for (const region of regions) {
-    const ok = region.ok
-    const conflict = region.conflict
+  for (let i = 0; i < regions.length; i++) {
+    const r = regions[i]
+    if (r.stable && r.buffer === 'o') {
+      knownBasePositions.push({
+        index: i,
+        baseStart: r.bufferStart!,
+        baseEnd: r.bufferStart! + r.bufferLength!,
+      })
+    } else if (!r.stable) {
+      knownBasePositions.push({
+        index: i,
+        baseStart: r.oStart!,
+        baseEnd: r.oStart! + r.oLength!,
+      })
+    }
+  }
 
-    if (ok) {
-      const content = ok as string[]
-      const regionSize = content.length
-      const baseStart = baseOffset
-      const baseEnd = baseOffset + regionSize
+  function getBaseRange(regionIndex: number): {
+    baseStart: number
+    baseEnd: number
+  } {
+    const r = regions[regionIndex]
+    if (r.stable && r.buffer === 'o') {
+      return { baseStart: r.bufferStart!, baseEnd: r.bufferStart! + r.bufferLength! }
+    }
+    if (!r.stable) {
+      return { baseStart: r.oStart!, baseEnd: r.oStart! + r.oLength! }
+    }
+    // "a" or "b" region: base range is between surrounding known positions
+    const prevKnown = knownBasePositions.filter(k => k.index < regionIndex).pop()
+    const nextKnown = knownBasePositions.find(k => k.index > regionIndex)
+    return {
+      baseStart: prevKnown ? prevKnown.baseEnd : 0,
+      baseEnd: nextKnown ? nextKnown.baseStart : baseLines.length,
+    }
+  }
 
+  for (let i = 0; i < regions.length; i++) {
+    const r = regions[i]
+
+    if (r.stable && r.buffer === 'o') {
+      // Common region - unchanged from original
+      mergedLines.push(...r.bufferContent!)
+    } else if (r.stable && (r.buffer === 'a' || r.buffer === 'b')) {
+      // Left-only or right-only change
+      const { baseStart, baseEnd } = getBaseRange(i)
+      const content = r.bufferContent!
+      const side = r.buffer === 'a' ? 'left-only' : 'right-only'
+
+      // Skip common regions (where base content matches)
       const baseSlice = baseLines.slice(baseStart, baseEnd).join('\n')
-      const contentStr = content.join('\n')
-
-      if (baseSlice === contentStr) {
+      if (content.join('\n') === baseSlice) {
         mergedLines.push(...content)
-        baseOffset = baseEnd
         continue
       }
-
-      const leftSlice = leftLines.slice(
-        Math.max(0, baseStart),
-        Math.min(leftLines.length, baseEnd)
-      ).join('\n')
-
-      const side: 'left-only' | 'right-only' =
-        leftSlice === contentStr ? 'left-only' : 'right-only'
 
       changes.push({
         id: makeChangeId(),
@@ -95,15 +146,13 @@ export function computeThreeWayMerge(
       })
 
       mergedLines.push(...content)
-      baseOffset = baseEnd
-    } else if (conflict) {
-      const leftPart = conflict.a as string[]
-      const rightPart = conflict.b as string[]
-      const regionSize = Math.max(leftPart.length, rightPart.length)
-      const baseStart = baseOffset
-      const baseEnd = baseOffset + regionSize
+    } else if (!r.stable) {
+      // Conflict
+      const { baseStart, baseEnd } = getBaseRange(i)
+      const leftPart = r.aContent || []
+      const rightPart = r.bContent || []
 
-      const conflictEntry: MergeConflict = {
+      conflicts.push({
         id: makeConflictId(),
         baseStart,
         baseEnd,
@@ -111,11 +160,9 @@ export function computeThreeWayMerge(
         rightContent: rightPart,
         selectedSide: 'left',
         resolved: false,
-      }
-      conflicts.push(conflictEntry)
+      })
 
       mergedLines.push(...leftPart)
-      baseOffset = baseEnd
     }
   }
 
@@ -150,8 +197,6 @@ export function resolveConflict(
     start: number
     end: number
     lines: string[]
-    isConflict: boolean
-    conflictId?: number
   }> = []
 
   for (const change of result.changes) {
@@ -159,7 +204,6 @@ export function resolveConflict(
       start: change.baseStart,
       end: change.baseEnd,
       lines: change.leftSelected ? change.leftContent : change.rightContent,
-      isConflict: false,
     })
   }
 
@@ -172,8 +216,6 @@ export function resolveConflict(
         : c.selectedSide === 'right'
           ? c.rightContent
           : [...c.leftContent, ...c.rightContent],
-      isConflict: true,
-      conflictId: c.id,
     })
   }
 

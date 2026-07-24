@@ -6,12 +6,10 @@ import { editor as Editor } from 'monaco-editor'
 import type { MergeResult, MergeChange, MergeConflict } from '@/utils/merge'
 import { resolveConflict } from '@/utils/merge'
 
-// Monaco worker setup
-import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
-
 self.MonacoEnvironment = {
   getWorker() {
-    return new editorWorker()
+    const url = new URL('monaco-editor/esm/vs/editor/editor.worker', import.meta.url)
+    return new Worker(url, { type: 'module' })
   },
 }
 
