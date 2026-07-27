@@ -23,6 +23,7 @@ export interface MergeConflict {
 
 export interface MergeResult {
   baseText: string
+  compareText: string
   mergedText: string
   changes: MergeChange[]
   conflicts: MergeConflict[]
@@ -170,6 +171,7 @@ export function computeThreeWayMerge(
 
   return {
     baseText,
+    compareText: rightText,
     mergedText,
     changes,
     conflicts,
@@ -239,6 +241,16 @@ export function resolveConflict(
     ...result,
     mergedText: mergedLines.join('\n'),
   }
+}
+
+export function resolveConflictByIndex(
+  result: MergeResult,
+  index: number,
+  side: 'left' | 'right' | 'both'
+): MergeResult {
+  const conflict = result.conflicts[index]
+  if (!conflict) return result
+  return resolveConflict(result, conflict.id, side)
 }
 
 export function getMergeStats(result: MergeResult) {

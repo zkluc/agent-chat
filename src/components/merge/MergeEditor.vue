@@ -1,17 +1,10 @@
-<!-- src/components/merge/MergeEditor.vue -->
+<!-- src/components/merge/MergeEditor.vue — Beyond Compare style two-panel diff -->
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import * as monaco from 'monaco-editor'
 import { editor as Editor } from 'monaco-editor'
 import type { MergeResult, MergeChange, MergeConflict } from '@/utils/merge'
 import { resolveConflict } from '@/utils/merge'
-
-self.MonacoEnvironment = {
-  getWorker() {
-    const url = new URL('monaco-editor/esm/vs/editor/editor.worker', import.meta.url)
-    return new Worker(url, { type: 'module' })
-  },
-}
 
 const props = defineProps<{
   mergeResult: MergeResult
@@ -28,26 +21,46 @@ const mergeResult = computed(() => props.mergeResult)
 const baseLabel = computed(() => props.baseLabel || 'Base')
 const compareLabel = computed(() => props.compareLabel || 'Compare')
 
-// Monaco editor instances
+// Two-panel editors
 const leftEditorRef = ref<HTMLDivElement | null>(null)
 const rightEditorRef = ref<HTMLDivElement | null>(null)
-const resultEditorRef = ref<HTMLDivElement | null>(null)
-
 let leftEditor: Editor.IStandaloneCodeEditor | null = null
 let rightEditor: Editor.IStandaloneCodeEditor | null = null
-let resultEditor: Editor.IStandaloneCodeEditor | null = null
-
 const leftModel = monaco.editor.createModel('')
 const rightModel = monaco.editor.createModel('')
-const resultModel = monaco.editor.createModel('')
-
-// Diff decoration IDs
 const leftDecorations = ref<string[]>([])
 const rightDecorations = ref<string[]>([])
-const resultDecorations = ref<string[]>([])
 
-// Active conflict selection
-const activeConflict = ref<number | null>(null)
+// Sync scroll state
+let syncingScroll = false
+
+// Conflict resolution
+const expandedConflicts = ref<Set<number>>(new Set())
+
+function isConflictExpanded(index: number): boolean {
+  return expandedConflicts.value.has(index)
+}
+
+function toggleConflict(index: number) {
+  if (expandedConflicts.value.has(index)) {
+    expandedConflicts.value.delete(index)
+  } else {
+    expandedConflicts.value.add(index)
+  }
+}
+
+function syncExpandedConflicts() {
+  const r = mergeResult.value
+  const newExpanded = new Set<number>()
+  for (let i = 0; i < r.conflicts.length; i++) {
+    if (!r.conflicts[i].resolved) {
+      newExpanded.add(i)
+    } else if (expandedConflicts.value.has(i)) {
+      newExpanded.add(i)
+    }
+  }
+  expandedConflicts.value = newExpanded
+}
 
 // Stats
 const stats = computed(() => {
@@ -63,59 +76,49 @@ const stats = computed(() => {
 
 // Initialize editors
 onMounted(() => {
+  const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'vs-dark' : 'vs'
+  const baseOpts: Editor.IStandaloneEditorConstructionOptions = {
+    readOnly: true,
+    minimap: { enabled: false },
+    lineNumbers: 'on',
+    renderLineHighlight: 'none',
+    scrollbar: { vertical: 'hidden', horizontal: 'auto' },
+    overviewRulerLanes: 0,
+    folding: false,
+    glyphMargin: false,
+    lineDecorationsWidth: 8,
+    lineNumbersMinChars: 3,
+    theme,
+  }
+
   if (leftEditorRef.value) {
     leftEditor = monaco.editor.create(leftEditorRef.value, {
+      ...baseOpts,
       model: leftModel,
-      readOnly: true,
-      minimap: { enabled: false },
-      lineNumbers: 'on',
-      renderLineHighlight: 'none',
-      scrollbar: { vertical: 'hidden', horizontal: 'auto' },
-      overviewRulerLanes: 0,
-      folding: false,
-      glyphMargin: false,
-      lineDecorationsWidth: 8,
-      lineNumbersMinChars: 3,
-      theme: document.documentElement.getAttribute('data-theme') === 'dark'
-        ? 'vs-dark' : 'vs',
     })
   }
 
   if (rightEditorRef.value) {
     rightEditor = monaco.editor.create(rightEditorRef.value, {
+      ...baseOpts,
       model: rightModel,
-      readOnly: true,
-      minimap: { enabled: false },
-      lineNumbers: 'on',
-      renderLineHighlight: 'none',
-      scrollbar: { vertical: 'hidden', horizontal: 'auto' },
-      overviewRulerLanes: 0,
-      folding: false,
-      glyphMargin: false,
-      lineDecorationsWidth: 8,
-      lineNumbersMinChars: 3,
-      theme: document.documentElement.getAttribute('data-theme') === 'dark'
-        ? 'vs-dark' : 'vs',
     })
   }
 
-  if (resultEditorRef.value) {
-    resultEditor = monaco.editor.create(resultEditorRef.value, {
-      model: resultModel,
-      readOnly: false,
-      minimap: { enabled: false },
-      lineNumbers: 'on',
-      renderLineHighlight: 'line',
-      scrollbar: { vertical: 'auto', horizontal: 'auto' },
-      overviewRulerLanes: 0,
-      folding: false,
-      glyphMargin: false,
-      lineDecorationsWidth: 8,
-      lineNumbersMinChars: 3,
-      theme: document.documentElement.getAttribute('data-theme') === 'dark'
-        ? 'vs-dark' : 'vs',
-    })
-  }
+  // Sync scroll between panels
+  leftEditor?.onDidScrollChange((e) => {
+    if (syncingScroll) return
+    syncingScroll = true
+    rightEditor?.setScrollPosition({ scrollTop: e.scrollTop })
+    syncingScroll = false
+  })
+
+  rightEditor?.onDidScrollChange((e) => {
+    if (syncingScroll) return
+    syncingScroll = true
+    leftEditor?.setScrollPosition({ scrollTop: e.scrollTop })
+    syncingScroll = false
+  })
 
   updateEditors()
 })
@@ -123,13 +126,10 @@ onMounted(() => {
 onBeforeUnmount(() => {
   leftEditor?.dispose()
   rightEditor?.dispose()
-  resultEditor?.dispose()
   leftModel.dispose()
   rightModel.dispose()
-  resultModel.dispose()
 })
 
-// Watch for merge result changes
 watch(mergeResult, () => {
   updateEditors()
 }, { deep: true })
@@ -137,143 +137,103 @@ watch(mergeResult, () => {
 function updateEditors() {
   const r = mergeResult.value
 
-  // Update left editor (base version)
+  // Left panel = base file (original)
   leftModel.setValue(r.baseText)
 
-  // Update right editor (merged result)
-  resultModel.setValue(r.mergedText)
+  // Right panel = compare file (original)
+  rightModel.setValue(r.compareText)
 
-  // Update middle editor (show conflicts/changes side)
-  updateCompareEditor()
-
-  // Apply decorations
   applyDecorations()
-}
-
-function updateCompareEditor() {
-  const r = mergeResult.value
-  const lines: string[] = []
-  const baseLines = r.baseText.split('\n')
-
-  let offset = 0
-  const allRegions: Array<{
-    start: number
-    end: number
-    lines: string[]
-    type: string
-  }> = []
-
-  for (const change of r.changes) {
-    allRegions.push({
-      start: change.baseStart,
-      end: change.baseEnd,
-      lines: change.leftSelected ? change.leftContent : change.rightContent,
-      type: change.type,
-    })
-  }
-
-  for (const c of r.conflicts) {
-    allRegions.push({
-      start: c.baseStart,
-      end: c.baseEnd,
-      lines: c.selectedSide === 'left'
-        ? c.leftContent
-        : c.selectedSide === 'right'
-          ? c.rightContent
-          : [...c.leftContent, ...c.rightContent],
-      type: 'conflict',
-    })
-  }
-
-  allRegions.sort((a, b) => a.start - b.start)
-
-  for (const region of allRegions) {
-    while (offset < region.start && offset < baseLines.length) {
-      lines.push(baseLines[offset])
-      offset++
-    }
-    lines.push(...region.lines)
-    offset = region.end
-  }
-
-  while (offset < baseLines.length) {
-    lines.push(baseLines[offset])
-    offset++
-  }
-
-  rightModel.setValue(lines.join('\n'))
+  syncExpandedConflicts()
 }
 
 function applyDecorations() {
   const r = mergeResult.value
 
-  // Clear existing decorations
   leftEditor?.removeDecorations(leftDecorations.value)
   rightEditor?.removeDecorations(rightDecorations.value)
-  resultEditor?.removeDecorations(resultDecorations.value)
 
   const leftDecs: monaco.editor.IModelDeltaDecoration[] = []
   const rightDecs: monaco.editor.IModelDeltaDecoration[] = []
-  const resultDecs: monaco.editor.IModelDeltaDecoration[] = []
 
-  // Highlight changes in base editor
+  // Highlight non-conflict changes
   for (const change of r.changes) {
-    const color = change.type === 'left-only'
-      ? 'rgba(124, 58, 237, 0.15)'
-      : 'rgba(236, 72, 153, 0.15)'
+    const startLine = change.baseStart + 1
+    const endLine = change.baseEnd
 
-    leftDecs.push({
-      range: new monaco.Range(
-        change.baseStart + 1, 1,
-        change.baseEnd, Number.MAX_SAFE_INTEGER
-      ),
-      options: {
-        isWholeLine: true,
-        className: `merge-change-${change.type}`,
-        overviewRuler: {
-          color: change.type === 'left-only'
-            ? 'rgba(124, 58, 237, 0.5)'
-            : 'rgba(236, 72, 153, 0.5)',
-          position: monaco.editor.OverviewRulerLane.Full,
+    if (change.type === 'left-only') {
+      // Deleted in compare — highlight red on left panel
+      leftDecs.push({
+        range: new monaco.Range(startLine, 1, endLine, Number.MAX_SAFE_INTEGER),
+        options: {
+          isWholeLine: true,
+          linesDecorationsWidth: 6,
+          inlineClassName: 'diff-deleted',
+          overviewRuler: { color: 'rgba(239,68,68,0.5)', position: monaco.editor.OverviewRulerLane.Full },
         },
-      },
-    })
+      })
+    } else {
+      // Added in compare — highlight green on right panel
+      rightDecs.push({
+        range: new monaco.Range(startLine, 1, endLine, Number.MAX_SAFE_INTEGER),
+        options: {
+          isWholeLine: true,
+          linesDecorationsWidth: 6,
+          inlineClassName: 'diff-added',
+          overviewRuler: { color: 'rgba(34,197,94,0.5)', position: monaco.editor.OverviewRulerLane.Full },
+        },
+      })
+    }
   }
 
-  // Highlight conflicts in base editor
+  // Highlight conflict regions
   for (const conflict of r.conflicts) {
-    leftDecs.push({
-      range: new monaco.Range(
-        conflict.baseStart + 1, 1,
-        conflict.baseEnd, Number.MAX_SAFE_INTEGER
-      ),
-      options: {
-        isWholeLine: true,
-        className: 'merge-conflict',
-        overviewRuler: {
-          color: 'rgba(239, 68, 68, 0.5)',
-          position: monaco.editor.OverviewRulerLane.Full,
+    const startLine = conflict.baseStart + 1
+    const endLine = conflict.baseEnd
+
+    if (conflict.resolved) {
+      // Resolved conflict — show which side was chosen
+      const cls = conflict.selectedSide === 'left' ? 'diff-resolved-left' : 'diff-resolved-right'
+      leftDecs.push({
+        range: new monaco.Range(startLine, 1, endLine, Number.MAX_SAFE_INTEGER),
+        options: { isWholeLine: true, linesDecorationsWidth: 6, inlineClassName: cls },
+      })
+      rightDecs.push({
+        range: new monaco.Range(startLine, 1, endLine, Number.MAX_SAFE_INTEGER),
+        options: { isWholeLine: true, linesDecorationsWidth: 6, inlineClassName: cls },
+      })
+    } else {
+      // Unresolved conflict — red highlight on both panels
+      leftDecs.push({
+        range: new monaco.Range(startLine, 1, endLine, Number.MAX_SAFE_INTEGER),
+        options: {
+          isWholeLine: true,
+          linesDecorationsWidth: 6,
+          inlineClassName: 'diff-conflict',
+          overviewRuler: { color: 'rgba(239,68,68,0.6)', position: monaco.editor.OverviewRulerLane.Full },
         },
-      },
-    })
+      })
+      rightDecs.push({
+        range: new monaco.Range(startLine, 1, endLine, Number.MAX_SAFE_INTEGER),
+        options: {
+          isWholeLine: true,
+          linesDecorationsWidth: 6,
+          inlineClassName: 'diff-conflict',
+          overviewRuler: { color: 'rgba(239,68,68,0.6)', position: monaco.editor.OverviewRulerLane.Full },
+        },
+      })
+    }
   }
 
-  leftDecorations.value = leftEditor?.deltaDecorations(
-    leftDecorations.value, leftDecs
-  ) || []
-
-  rightDecorations.value = rightEditor?.deltaDecorations(
-    rightDecorations.value, rightDecs
-  ) || []
-
-  resultDecorations.value = resultEditor?.deltaDecorations(
-    resultDecorations.value, resultDecs
-  ) || []
+  leftDecorations.value = leftEditor?.deltaDecorations(leftDecorations.value, leftDecs) || []
+  rightDecorations.value = rightEditor?.deltaDecorations(rightDecorations.value, rightDecs) || []
 }
 
-function handleConflictSide(conflictId: number, side: 'left' | 'right') {
-  const updated = resolveConflict(mergeResult.value, conflictId, side)
+function handleConflictSide(index: number, side: 'left' | 'right' | 'both') {
+  const conflict = mergeResult.value.conflicts[index]
+  const updated = resolveConflict(mergeResult.value, conflict.id, side)
   emit('update:mergeResult', updated)
+  expandedConflicts.value.delete(index)
 }
 
 function handleAcceptAll() {
@@ -287,9 +247,6 @@ function handleAcceptAll() {
 
 function handleRejectAll() {
   const r = mergeResult.value
-  for (const change of r.changes) {
-    change.leftSelected = change.type === 'left-only'
-  }
   for (const conflict of r.conflicts) {
     conflict.resolved = false
     conflict.selectedSide = 'left'
@@ -300,17 +257,13 @@ function handleRejectAll() {
 function handleExport() {
   emit('export', mergeResult.value.mergedText)
 }
-
-function copyToClipboard(text: string) {
-  navigator.clipboard.writeText(text)
-}
 </script>
 
 <template>
-  <div class="merge-editor">
+  <div class="bc-editor">
     <!-- Toolbar -->
-    <div class="merge-toolbar">
-      <div class="merge-toolbar-left">
+    <div class="bc-toolbar">
+      <div class="bc-toolbar-left">
         <el-tag size="small" effect="plain">
           {{ stats.totalChanges }} 处变更
         </el-tag>
@@ -321,110 +274,120 @@ function copyToClipboard(text: string) {
           无冲突
         </el-tag>
       </div>
-      <div class="merge-toolbar-right">
-        <el-button size="small" @click="handleAcceptAll">
-          全部接受
-        </el-button>
-        <el-button size="small" @click="handleRejectAll">
-          全部拒绝
-        </el-button>
-        <el-button size="small" type="primary" @click="handleExport">
-          导出合并结果
-        </el-button>
+      <div class="bc-toolbar-right">
+        <el-button size="small" @click="handleAcceptAll">全部接受</el-button>
+        <el-button size="small" @click="handleRejectAll">全部拒绝</el-button>
+        <el-button size="small" type="primary" @click="handleExport">导出合并结果</el-button>
       </div>
     </div>
 
-    <!-- Editor Panels -->
-    <div class="merge-panels">
-      <!-- Base (Left) -->
-      <div class="merge-panel">
-        <div class="panel-header">
-          <span class="panel-label">{{ baseLabel }}</span>
-          <el-tag size="small" type="info">原始版本</el-tag>
+    <!-- Two-panel diff view -->
+    <div class="bc-panels">
+      <!-- Left: Base file -->
+      <div class="bc-panel">
+        <div class="bc-panel-header bc-panel-header--left">
+          <span class="bc-panel-label">{{ baseLabel }}</span>
         </div>
-        <div ref="leftEditorRef" class="editor-container" />
+        <div ref="leftEditorRef" class="bc-editor-container" />
       </div>
 
-      <!-- Compare (Middle) -->
-      <div class="merge-panel">
-        <div class="panel-header">
-          <span class="panel-label">{{ compareLabel }}</span>
-          <el-tag size="small" type="warning">变更视图</el-tag>
-        </div>
-        <div ref="rightEditorRef" class="editor-container" />
+      <!-- Center gutter -->
+      <div class="bc-gutter">
+        <div class="bc-gutter-line" />
       </div>
 
-      <!-- Result (Right) -->
-      <div class="merge-panel">
-        <div class="panel-header">
-          <span class="panel-label">合并结果</span>
-          <el-tag size="small" type="success">可编辑</el-tag>
+      <!-- Right: Compare file -->
+      <div class="bc-panel">
+        <div class="bc-panel-header bc-panel-header--right">
+          <span class="bc-panel-label">{{ compareLabel }}</span>
         </div>
-        <div ref="resultEditorRef" class="editor-container" />
+        <div ref="rightEditorRef" class="bc-editor-container" />
       </div>
     </div>
 
-    <!-- Conflict Resolution Panel -->
-    <div v-if="mergeResult.conflicts.length > 0" class="conflict-panel">
-      <div class="conflict-header">
-        <span>冲突解决</span>
-      </div>
-      <div class="conflict-list">
-        <div
-          v-for="conflict in mergeResult.conflicts"
-          :key="conflict.id"
-          class="conflict-item"
-          :class="{ resolved: conflict.resolved }"
-        >
-          <div class="conflict-info">
-            <span class="conflict-line">
-              行 {{ conflict.baseStart + 1 }}-{{ conflict.baseEnd }}
-            </span>
-            <el-tag
-              v-if="conflict.resolved"
-              size="small"
-              type="success"
-            >
-              已解决 ({{ conflict.selectedSide === 'left' ? '左侧' : '右侧' }})
-            </el-tag>
-            <el-tag v-else size="small" type="danger">
-              待解决
-            </el-tag>
+    <!-- Inline conflict resolution blocks -->
+    <div v-if="mergeResult.conflicts.length > 0" class="bc-conflicts">
+      <div
+        v-for="(conflict, idx) in mergeResult.conflicts"
+        :key="conflict.id"
+        class="bc-conflict"
+        :class="{
+          'bc-conflict--resolved': conflict.resolved,
+          'bc-conflict--unresolved': !conflict.resolved,
+        }"
+      >
+        <!-- Conflict header -->
+        <div class="bc-conflict-header" @click="toggleConflict(idx)">
+          <div class="bc-conflict-header-left">
+            <span class="bc-conflict-expand">{{ isConflictExpanded(idx) ? '▾' : '▸' }}</span>
+            <span class="bc-conflict-id">冲突 #{{ idx + 1 }}</span>
+            <span class="bc-conflict-range">行 {{ conflict.baseStart + 1 }}-{{ conflict.baseEnd }}</span>
           </div>
-          <div class="conflict-preview">
-            <div class="conflict-side">
-              <span class="side-label">左侧:</span>
-              <code>{{ conflict.leftContent.slice(0, 2).join('\n') }}</code>
+          <div class="bc-conflict-header-right">
+            <el-tag v-if="conflict.resolved" size="small" type="success" effect="dark">
+              ✓ {{ conflict.selectedSide === 'left' ? '已选' + baseLabel : conflict.selectedSide === 'right' ? '已选' + compareLabel : '双方保留' }}
+            </el-tag>
+            <el-tag v-else size="small" type="danger" effect="dark">待解决</el-tag>
+          </div>
+        </div>
+
+        <!-- Conflict body: side-by-side content -->
+        <div v-if="isConflictExpanded(idx)" class="bc-conflict-body">
+          <div class="bc-conflict-sides">
+            <!-- Left side -->
+            <div class="bc-conflict-side bc-conflict-side--left" :class="{ 'bc-conflict-side--selected': conflict.selectedSide === 'left' }">
+              <div class="bc-conflict-side-head">
+                <span class="bc-conflict-side-label">{{ baseLabel }}</span>
+                <el-button size="small" :type="conflict.selectedSide === 'left' ? 'success' : 'default'" @click.stop="handleConflictSide(idx, 'left')">
+                  {{ conflict.selectedSide === 'left' ? '✓ 已选' : '接受此版本' }}
+                </el-button>
+              </div>
+              <div class="bc-conflict-side-code">
+                <pre v-for="(line, li) in conflict.leftContent" :key="li">{{ line || ' ' }}</pre>
+                <div v-if="conflict.leftContent.length === 0" class="bc-conflict-empty">(空)</div>
+              </div>
             </div>
-            <div class="conflict-side">
-              <span class="side-label">右侧:</span>
-              <code>{{ conflict.rightContent.slice(0, 2).join('\n') }}</code>
+
+            <!-- Divider -->
+            <div class="bc-conflict-divider" />
+
+            <!-- Right side -->
+            <div class="bc-conflict-side bc-conflict-side--right" :class="{ 'bc-conflict-side--selected': conflict.selectedSide === 'right' }">
+              <div class="bc-conflict-side-head">
+                <span class="bc-conflict-side-label">{{ compareLabel }}</span>
+                <el-button size="small" :type="conflict.selectedSide === 'right' ? 'success' : 'default'" @click.stop="handleConflictSide(idx, 'right')">
+                  {{ conflict.selectedSide === 'right' ? '✓ 已选' : '接受此版本' }}
+                </el-button>
+              </div>
+              <div class="bc-conflict-side-code">
+                <pre v-for="(line, li) in conflict.rightContent" :key="li">{{ line || ' ' }}</pre>
+                <div v-if="conflict.rightContent.length === 0" class="bc-conflict-empty">(空)</div>
+              </div>
             </div>
           </div>
-          <div class="conflict-actions">
-            <el-button
-              size="small"
-              :type="conflict.selectedSide === 'left' ? 'primary' : ''"
-              @click="handleConflictSide(conflict.id, 'left')"
-            >
-              保留左侧
-            </el-button>
-            <el-button
-              size="small"
-              :type="conflict.selectedSide === 'right' ? 'primary' : ''"
-              @click="handleConflictSide(conflict.id, 'right')"
-            >
-              保留右侧
+
+          <!-- Both button -->
+          <div class="bc-conflict-both">
+            <el-button size="small" :type="conflict.selectedSide === 'both' ? 'warning' : 'default'" @click.stop="handleConflictSide(idx, 'both')">
+              双方都保留
             </el-button>
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Merged result preview -->
+    <div v-if="mergeResult.conflicts.length > 0" class="bc-merged-preview">
+      <div class="bc-merged-preview-header">
+        <span class="bc-merged-preview-title">合并结果预览</span>
+      </div>
+      <pre class="bc-merged-preview-code">{{ mergeResult.mergedText }}</pre>
     </div>
   </div>
 </template>
 
 <style scoped>
-.merge-editor {
+.bc-editor {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -432,7 +395,8 @@ function copyToClipboard(text: string) {
   color: var(--doubao-text-primary);
 }
 
-.merge-toolbar {
+/* Toolbar */
+.bc-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -443,32 +407,29 @@ function copyToClipboard(text: string) {
   gap: 8px;
 }
 
-.merge-toolbar-left,
-.merge-toolbar-right {
+.bc-toolbar-left,
+.bc-toolbar-right {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.merge-panels {
+/* Two-panel layout */
+.bc-panels {
   display: flex;
   flex: 1;
   min-height: 0;
-  gap: 1px;
-  background: var(--doubao-border-primary);
 }
 
-.merge-panel {
+.bc-panel {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: var(--doubao-bg-primary);
 }
 
-.panel-header {
+.bc-panel-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   padding: 6px 12px;
   background: var(--doubao-bg-card);
@@ -476,7 +437,15 @@ function copyToClipboard(text: string) {
   flex-shrink: 0;
 }
 
-.panel-label {
+.bc-panel-header--left {
+  border-right: 1px solid var(--doubao-border-primary);
+}
+
+.bc-panel-header--right {
+  border-left: 1px solid var(--doubao-border-primary);
+}
+
+.bc-panel-label {
   font-size: 12px;
   font-weight: 600;
   color: var(--doubao-text-secondary);
@@ -484,111 +453,241 @@ function copyToClipboard(text: string) {
   letter-spacing: 0.5px;
 }
 
-.editor-container {
+.bc-editor-container {
   flex: 1;
   min-height: 0;
   overflow: hidden;
 }
 
-/* Conflict Panel */
-.conflict-panel {
+/* Center gutter */
+.bc-gutter {
+  width: 3px;
+  background: var(--doubao-border-primary);
   flex-shrink: 0;
-  max-height: 300px;
+}
+
+.bc-gutter-line {
+  width: 100%;
+  height: 100%;
+}
+
+/* Conflict blocks */
+.bc-conflicts {
+  flex-shrink: 0;
+  max-height: 350px;
   border-top: 2px solid var(--doubao-border-primary);
   background: var(--doubao-bg-base);
-  display: flex;
-  flex-direction: column;
-}
-
-.conflict-header {
-  padding: 8px 16px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--doubao-text-primary);
-  border-bottom: 1px solid var(--doubao-border-primary);
-  flex-shrink: 0;
-}
-
-.conflict-list {
   overflow-y: auto;
-  flex: 1;
-  padding: 8px;
 }
 
-.conflict-item {
-  padding: 12px;
-  margin-bottom: 8px;
+.bc-conflict {
+  margin: 8px;
   border: 1px solid var(--doubao-border-secondary);
-  border-radius: var(--doubao-radius-xs);
+  border-radius: 6px;
   background: var(--doubao-bg-primary);
-  transition: all 0.2s;
-}
-
-.conflict-item:hover {
-  border-color: var(--doubao-brand);
-}
-
-.conflict-item.resolved {
-  border-color: var(--doubao-border-light);
-  opacity: 0.7;
-}
-
-.conflict-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.conflict-line {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--doubao-text-secondary);
-  font-family: 'Cascadia Code', 'Fira Code', monospace;
-}
-
-.conflict-preview {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-  font-size: 12px;
-}
-
-.conflict-side {
-  flex: 1;
-  padding: 6px 8px;
-  background: var(--doubao-bg-base);
-  border-radius: 4px;
   overflow: hidden;
 }
 
-.side-label {
-  font-size: 10px;
-  color: var(--doubao-text-tertiary);
-  text-transform: uppercase;
-  margin-bottom: 4px;
-  display: block;
+.bc-conflict--unresolved {
+  border-color: var(--doubao-danger, #f56c6c);
+  border-left: 3px solid var(--doubao-danger, #f56c6c);
 }
 
-.conflict-side code {
-  display: block;
-  white-space: pre-wrap;
-  word-break: break-all;
-  color: var(--doubao-text-secondary);
-  font-family: 'Cascadia Code', 'Fira Code', monospace;
+.bc-conflict--resolved {
+  border-color: var(--doubao-success, #67c23a);
+  border-left: 3px solid var(--doubao-success, #67c23a);
+  opacity: 0.7;
 }
 
-.conflict-actions {
+.bc-conflict--resolved:hover {
+  opacity: 1;
+}
+
+.bc-conflict-header {
   display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.bc-conflict-header:hover {
+  background: var(--doubao-bg-hover, rgba(255,255,255,0.03));
+}
+
+.bc-conflict-header-left {
+  display: flex;
+  align-items: center;
   gap: 8px;
 }
 
-/* Monaco editor customization */
+.bc-conflict-expand {
+  color: var(--doubao-text-secondary);
+  font-size: 12px;
+  width: 12px;
+}
+
+.bc-conflict-id {
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+
+.bc-conflict-range {
+  font-size: 12px;
+  color: var(--doubao-text-placeholder);
+}
+
+.bc-conflict-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bc-conflict-body {
+  border-top: 1px solid var(--doubao-border-light);
+}
+
+.bc-conflict-sides {
+  display: flex;
+}
+
+.bc-conflict-side {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.bc-conflict-side--left {
+  background: rgba(124, 58, 237, 0.03);
+}
+
+.bc-conflict-side--left.bc-conflict-side--selected {
+  background: rgba(124, 58, 237, 0.10);
+}
+
+.bc-conflict-side--right {
+  background: rgba(236, 72, 153, 0.03);
+}
+
+.bc-conflict-side--right.bc-conflict-side--selected {
+  background: rgba(236, 72, 153, 0.10);
+}
+
+.bc-conflict-divider {
+  width: 1px;
+  background: var(--doubao-border-primary);
+}
+
+.bc-conflict-side-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--doubao-border-light);
+}
+
+.bc-conflict-side-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--doubao-text-secondary);
+  text-transform: uppercase;
+}
+
+.bc-conflict-side-code {
+  padding: 6px 10px;
+  overflow-x: auto;
+}
+
+.bc-conflict-side-code pre {
+  margin: 0;
+  padding: 1px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.bc-conflict-empty {
+  font-size: 12px;
+  color: var(--doubao-text-placeholder);
+  font-style: italic;
+}
+
+.bc-conflict-both {
+  padding: 6px 10px;
+  border-top: 1px solid var(--doubao-border-light);
+  display: flex;
+  justify-content: center;
+  background: var(--doubao-bg-card);
+}
+
+/* Monaco customization */
 :deep(.monaco-editor) {
   border-radius: 0;
 }
 
 :deep(.monaco-editor .margin) {
   background: var(--doubao-bg-card) !important;
+}
+
+/* Line-level diff highlighting — Beyond Compare style */
+:deep(.diff-deleted) {
+  background: rgba(239, 68, 68, 0.12) !important;
+}
+
+:deep(.diff-added) {
+  background: rgba(34, 197, 94, 0.12) !important;
+}
+
+:deep(.diff-conflict) {
+  background: rgba(239, 68, 68, 0.15) !important;
+}
+
+:deep(.diff-resolved-left) {
+  background: rgba(124, 58, 237, 0.10) !important;
+}
+
+:deep(.diff-resolved-right) {
+  background: rgba(236, 72, 153, 0.10) !important;
+}
+
+/* Merged result preview */
+.bc-merged-preview {
+  flex-shrink: 0;
+  max-height: 200px;
+  border-top: 1px solid var(--doubao-border-primary);
+  background: var(--doubao-bg-base);
+  display: flex;
+  flex-direction: column;
+}
+
+.bc-merged-preview-header {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--doubao-border-light);
+  flex-shrink: 0;
+}
+
+.bc-merged-preview-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--doubao-text-secondary);
+  text-transform: uppercase;
+}
+
+.bc-merged-preview-code {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  color: var(--doubao-text-primary);
+  overflow: auto;
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 </style>

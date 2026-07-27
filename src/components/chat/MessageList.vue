@@ -17,6 +17,8 @@
           <MessageBubble
             :message="item.message"
             :streaming="index === messages.length - 1 && isStreaming"
+            @retry="(t: string) => emit('retry', t)"
+            @regenerate="(id: string) => emit('regenerate', id)"
           />
         </DynamicScrollerItem>
       </template>
@@ -45,6 +47,11 @@ import MessageBubble from './MessageBubble.vue'
 const props = defineProps<{
   messages: Message[]
   isStreaming: boolean
+}>()
+
+const emit = defineEmits<{
+  retry: [text: string]
+  regenerate: [id: string]
 }>()
 
 const scrollerRef = ref<any>(null)
@@ -115,17 +122,23 @@ function scrollToBottom() {
   align-items: center;
   gap: 6px;
   padding: 8px 16px;
-  background: var(--primary-color, #409eff);
-  color: white;
-  border-radius: 20px;
+  background: var(--doubao-bg-primary);
+  color: var(--doubao-text-primary);
+  border-radius: var(--doubao-radius-l);
   cursor: pointer;
   font-size: 13px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  font-weight: 500;
+  box-shadow: var(--doubao-shadow-lv2);
+  border: 1px solid var(--doubao-border-primary);
   z-index: 10;
-  transition: transform 0.2s;
+  transition: transform 0.2s, box-shadow 0.2s;
 }
 .jump-to-bottom:hover {
   transform: translateX(-50%) scale(1.05);
+  box-shadow: var(--doubao-shadow-lv3);
+}
+.jump-to-bottom:hover .el-icon {
+  color: var(--doubao-brand);
 }
 .empty-state {
   position: absolute;
@@ -133,11 +146,24 @@ function scrollToBottom() {
   left: 50%;
   transform: translate(-50%, -50%);
   text-align: center;
-  color: var(--text-secondary, #999);
+  color: var(--doubao-text-quaternary);
 }
-.empty-icon { font-size: 48px; margin-bottom: 12px; }
-.empty-text { font-size: 16px; }
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+.empty-text {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--doubao-text-tertiary);
+}
 
-.fade-enter-active, .fade-leave-active { transition: opacity 0.2s; }
-.fade-enter-from, .fade-leave-to { opacity: 0; }
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
 </style>

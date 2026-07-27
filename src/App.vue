@@ -1,10 +1,9 @@
 <template>
-  <ChatWindow />
+  <router-view />
 </template>
 
 <script setup lang="ts">
 import { onMounted } from 'vue'
-import ChatWindow from '@/components/chat/ChatWindow.vue'
 import { registerDefaultBlocks } from '@/registry/defaults'
 
 onMounted(() => {

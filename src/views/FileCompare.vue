@@ -62,7 +62,10 @@ const mergeStats = computed(() => {
 })
 
 // Version management functions
+const VERSION_LIMIT = 3
+
 function addVersion() {
+  if (versions.value.length >= VERSION_LIMIT) return
   const id = genId()
   const num = versions.value.length + 1
   versions.value.push({ id, name: `版本 ${num}`, content: '' })
@@ -82,6 +85,16 @@ function renameVersion(id: string, newName: string) {
 }
 
 // File import
+const fileInputRefs = ref<Record<string, HTMLInputElement>>({})
+
+function setFileInputRef(el: HTMLInputElement | null, versionId: string) {
+  if (el) fileInputRefs.value[versionId] = el
+}
+
+function triggerFileImport(versionId: string) {
+  fileInputRefs.value[versionId]?.click()
+}
+
 function handleFileImport(event: Event, versionId: string) {
   const file = (event.target as HTMLInputElement).files?.[0]
   if (file) readFile(file, versionId)
@@ -149,7 +162,7 @@ function computeMerge() {
   mergeResult.value = computeThreeWayMerge(base.content, base.content, compare.content)
 }
 
-watch([selectedBase, selectedCompare], computeMerge)
+watch([selectedBase, selectedCompare, versions], computeMerge, { deep: true })
 
 // Merge editor handlers
 function handleMergeResultUpdate(result: MergeResult) {
@@ -183,8 +196,8 @@ const availableMessages = computed(() => store.messages)
     <div class="version-sidebar">
       <div class="sidebar-header">
         <span class="sidebar-title">版本管理</span>
-        <el-button :icon="Plus" size="small" type="primary" link @click="addVersion">
-          添加版本
+        <el-button :icon="Plus" size="small" type="primary" link :disabled="versions.length >= VERSION_LIMIT" @click="addVersion">
+          添加版本 {{ versions.length >= VERSION_LIMIT ? '(最多3个)' : '' }}
         </el-button>
       </div>
       <div class="version-list">
@@ -226,10 +239,14 @@ const availableMessages = computed(() => store.messages)
               <span v-else class="version-empty">未导入</span>
             </div>
             <div class="version-actions">
-              <label class="version-import-btn">
-                <input type="file" style="display:none" accept=".txt,.ts,.js,.jsx,.tsx,.vue,.html,.css,.json,.md,.py,.go,.java,.yaml,.yml,.xml,.sh,.sql,.c,.cpp,.h,.cs,.rb,.rs,.swift,.kt,.dart,.php,.log,.cfg,.ini,.env,.csv" @change="handleFileImport($event, v.id)" />
-                <el-button size="small" :icon="UploadIcon" link>导入文件</el-button>
-              </label>
+              <input
+                :ref="(el) => setFileInputRef(el as HTMLInputElement, v.id)"
+                type="file"
+                style="display:none"
+                accept=".txt,.ts,.js,.jsx,.tsx,.vue,.html,.css,.json,.md,.py,.go,.java,.yaml,.yml,.xml,.sh,.sql,.c,.cpp,.h,.cs,.rb,.rs,.swift,.kt,.dart,.php,.log,.cfg,.ini,.env,.csv,.docx,.pdf,.doc"
+                @change="handleFileImport($event, v.id)"
+              />
+              <el-button size="small" :icon="UploadIcon" link @click="triggerFileImport(v.id)">导入文件</el-button>
               <el-button
                 size="small"
                 :type="selectedBase === v.id ? 'success' : ''"
@@ -298,7 +315,7 @@ const availableMessages = computed(() => store.messages)
         />
       </div>
       <div v-else class="empty-state">
-        <Edit :size="64" class="empty-icon" />
+        <Edit :size="48" class="empty-icon" />
         <p>文件合并对比</p>
         <span class="empty-desc">
           在左侧添加版本并导入文件，然后选择基准和对比版本以查看合并差异

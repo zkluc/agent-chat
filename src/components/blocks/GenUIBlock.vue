@@ -57,18 +57,18 @@ provide(GENUI_ON_ACTION, (action: string, data: Record<string, unknown>) => {
 
 <style lang="less" scoped>
 .genui-block {
-  border: 1px solid var(--border-color, #e4e7ed);
+  border: 1px solid var(--border-color, #EFE7FC);
   border-radius: 8px;
   overflow: hidden;
-  background: var(--bg-primary, #fff);
+  background: var(--bg-primary, #FAF5FF);
 }
 
 .genui-message {
   padding: 12px 16px;
   font-size: 14px;
-  color: var(--text-primary, #303133);
-  border-bottom: 1px solid var(--border-color, #e4e7ed);
-  background: var(--bg-secondary, #f5f7fa);
+  color: var(--text-primary, #0F172A);
+  border-bottom: 1px solid var(--border-color, #EFE7FC);
+  background: var(--bg-secondary, #F7F3FD);
 }
 
 .genui-container {
@@ -101,7 +101,7 @@ provide(GENUI_ON_ACTION, (action: string, data: Record<string, unknown>) => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--color-primary, #409eff);
+  background: var(--color-primary, #7C3AED);
   animation: genui-bounce 1.4s infinite ease-in-out;
 }
 

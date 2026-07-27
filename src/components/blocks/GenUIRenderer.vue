@@ -39,6 +39,7 @@ import {
   ElOption,
   ElSwitch,
   ElRadioGroup,
+  ElCheckbox,
   ElCheckboxGroup,
   ElDatePicker,
   ElTimePicker,
@@ -76,6 +77,8 @@ import {
   ElResult,
   ElEmpty,
   ElScrollbar,
+  ElIcon,
+  ElText,
 } from 'element-plus'
 
 const props = defineProps<{
@@ -93,7 +96,8 @@ const COMPONENT_MAP: Record<string, Component> = {
   TinyOption: ElOption,
   TinySwitch: ElSwitch,
   TinyRadio: ElRadioGroup,
-  TinyCheckbox: ElCheckboxGroup,
+  TinyCheckbox: ElCheckbox,
+  TinyCheckboxGroup: ElCheckboxGroup,
   TinyDatePicker: ElDatePicker,
   TinyTimePicker: ElTimePicker,
   TinyNumeric: ElInputNumber,
@@ -146,6 +150,7 @@ const COMPONENT_MAP: Record<string, Component> = {
   ElOption,
   ElSwitch,
   ElRadioGroup,
+  ElCheckbox,
   ElCheckboxGroup,
   ElDatePicker,
   ElTimePicker,
@@ -179,7 +184,8 @@ const COMPONENT_MAP: Record<string, Component> = {
   ElResult,
   ElEmpty,
   ElScrollbar,
-  ElText: 'span',
+  ElIcon,
+  ElText: ElText,
   div: 'div',
   span: 'span',
   p: 'p',
@@ -278,7 +284,8 @@ const FORM_COMPONENTS = new Set([
   'ElSelect', 'TinySelect',
   'ElSwitch', 'TinySwitch',
   'ElRadioGroup', 'TinyRadio',
-  'ElCheckboxGroup', 'TinyCheckbox',
+  'ElCheckbox', 'TinyCheckbox',
+  'ElCheckboxGroup', 'TinyCheckboxGroup',
   'ElDatePicker', 'TinyDatePicker',
   'ElTimePicker', 'TinyTimePicker',
   'ElInputNumber', 'TinyNumeric',
@@ -293,6 +300,8 @@ const resolvedProps = computed(() => {
   const p = { ...raw }
   const compName = props.schema.componentName
 
+  delete p.children
+
   if (typeof p.size === 'string' && SIZE_MAP[p.size]) {
     p.size = SIZE_MAP[p.size]
   }
@@ -301,8 +310,16 @@ const resolvedProps = computed(() => {
     p.type = TYPE_MAP[p.type]
   }
 
-  if ((compName === 'ElButton' || compName === 'TinyButton') && typeof p.type === 'string' && !TYPE_MAP[p.type]) {
-    p.type = 'default'
+  const TYPE_VALID_COMPONENTS = new Set([
+    'ElButton', 'TinyButton',
+    'ElLink', 'TinyLink',
+    'ElAlert', 'TinyAlert',
+    'ElTag', 'TinyTag',
+    'ElBadge', 'TinyBadge',
+  ])
+
+  if (TYPE_VALID_COMPONENTS.has(compName) && typeof p.type === 'string' && !TYPE_MAP[p.type]) {
+    delete p.type
   }
 
   if (p.style) {
@@ -350,6 +367,14 @@ const resolvedProps = computed(() => {
     }
   }
 
+  if (p.justify !== undefined) {
+    if (typeof p.justify === 'string' && ['start', 'center', 'end', 'space-around', 'space-between', 'space-evenly'].includes(p.justify)) {
+      // valid
+    } else {
+      delete p.justify
+    }
+  }
+
   if (p.model !== undefined) {
     delete p.model
   }
@@ -361,6 +386,8 @@ const componentBindings = computed(() => {
   const bindings: Record<string, unknown> = { ...resolvedProps.value }
   const compName = props.schema.componentName
   const rawProps = props.schema.props || {}
+
+  delete bindings.children
 
   if (FORM_COMPONENTS.has(compName) && typeof rawProps.model === 'string' && rawProps.model) {
     const key = rawProps.model

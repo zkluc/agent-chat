@@ -15,7 +15,7 @@ function genMsgId(): string {
 export const useConversationStore = defineStore('conversation', () => {
   const conversations = ref<Conversation[]>([])
   const activeConversationId = ref<string | null>(null)
-  const streamProcessor = new StreamProcessor()
+  let streamProcessor = new StreamProcessor()
 
   function persist() {
     saveToCache(JSON.stringify(conversations.value))
@@ -205,6 +205,13 @@ export const useConversationStore = defineStore('conversation', () => {
     persist()
   }
 
+  function deleteMessage(msgId: string) {
+    if (!activeConversation.value) return
+    activeConversation.value.messages = activeConversation.value.messages.filter(m => m.id !== msgId)
+    activeConversation.value.updated_at = new Date().toISOString()
+    persist()
+  }
+
   function clearMessages() {
     if (activeConversation.value) {
       activeConversation.value.messages = []
@@ -222,6 +229,26 @@ export const useConversationStore = defineStore('conversation', () => {
     } catch {}
   }
 
+  function getCompletedToolCalls() {
+    return streamProcessor.getCompletedToolCalls()
+  }
+
+  function getOrderedBlockStates() {
+    return streamProcessor.getOrderedBlockStates()
+  }
+
+  function markToolCallExecuted(blockId: string) {
+    streamProcessor.markToolCallExecuted(blockId)
+  }
+
+  function setFinishedWithToolCalls(value: boolean) {
+    streamProcessor.setFinishedWithToolCalls(value)
+  }
+
+  function addToolResultBlockDirect(toolCallId: string, name: string, output: string, state: string) {
+    streamProcessor.addToolResultBlock(toolCallId, name, output, state)
+  }
+
   return {
     conversations,
     activeConversationId,
@@ -231,7 +258,6 @@ export const useConversationStore = defineStore('conversation', () => {
     currentBlocks,
     streamError,
     finishedWithToolCalls,
-    streamProcessor,
     createConversation,
     setActiveConversation,
     addUserMessage,
@@ -241,9 +267,15 @@ export const useConversationStore = defineStore('conversation', () => {
     resetStream,
     deleteConversation,
     updateConversationTitle,
+    deleteMessage,
     clearMessages,
     clearAll,
     updateToolCallState,
     addToolResultBlock,
+    getCompletedToolCalls,
+    getOrderedBlockStates,
+    markToolCallExecuted,
+    setFinishedWithToolCalls,
+    addToolResultBlockDirect,
   }
 })

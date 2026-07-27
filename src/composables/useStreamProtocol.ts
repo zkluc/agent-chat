@@ -180,7 +180,7 @@ export function useStreamProtocol() {
   function checkAndRunAgenticLoop() {
     // Wait a tick for the processor to finish updating
     setTimeout(async () => {
-      const completedTools = store.streamProcessor.getCompletedToolCalls()
+      const completedTools = store.getCompletedToolCalls()
 
       if (completedTools.length === 0) {
         agenticLoopActive = false
@@ -203,7 +203,7 @@ export function useStreamProtocol() {
 
       for (const tc of completedTools) {
         store.updateToolCallState(tc.id, 'running')
-        store.streamProcessor.markToolCallExecuted(tc.id)
+        store.markToolCallExecuted(tc.id)
       }
 
       const execResults = await Promise.allSettled(
@@ -233,8 +233,8 @@ export function useStreamProtocol() {
 
       // 4. Continue streaming — model will generate final response based on tool results
       store.startAssistantMessage()
-      store.streamProcessor.reset()
-      store.streamProcessor.setFinishedWithToolCalls(false)
+      store.resetStream()
+      store.setFinishedWithToolCalls(false)
 
       startStream()
     }, 100)
